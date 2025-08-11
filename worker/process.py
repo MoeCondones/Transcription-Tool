@@ -181,7 +181,8 @@ def to_stream(notes, instrument: str, tempo: int = 120):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--input", required=True)
+    ap.add_argument("--input", help="Path to input audio (when transcribing from audio)")
+    ap.add_argument("--input-json", help="Path to input notes JSON (when transposing only)")
     ap.add_argument("--instrument", default="auto")
     ap.add_argument("--output-json", required=True)
     ap.add_argument("--output-musicxml", required=True)
@@ -189,11 +190,32 @@ def main():
     ap.add_argument("--separate", choices=["auto", "demucs", "spleeter", "no"], default="no")
     args = ap.parse_args()
 
+    # Transpose from existing notes JSON without audio reprocessing
+    if args.input_json:
+        data = json.loads(Path(args.input_json).read_text(encoding="utf-8"))
+        notes = data.get("notes", [])
+        meta = data.get("meta", {})
+        tempo_est = int(meta.get("tempo", args.tempo or 120))
+        target = args.instrument if args.instrument != "auto" else meta.get("instrument", "soprano")
+        semitone_map = {"soprano": 2, "alto": 9, "tenor": 14, "baritone": 21}
+        shift = semitone_map.get(target, 2)
+        tnotes = []
+        for n in notes:
+            m = int(n["midi"]) + shift
+            tnotes.append({**n, "midi": m, "name": midi_to_name(m)})
+        s = to_stream(tnotes, instrument=target, tempo=tempo_est)
+        meta["instrument"] = target
+        Path(args.output_json).write_text(json.dumps({"meta": meta, "notes": tnotes}), encoding="utf-8")
+        s.write("musicxml", fp=args.output_musicxml)
+        return
+
+    # Otherwise, transcribe from audio
+    if not args.input:
+        raise SystemExit("--input is required when not using --input-json")
     y, sr = librosa.load(args.input, sr=44100, mono=True)
     if np.max(np.abs(y)) > 0:
         y = y / np.max(np.abs(y))
     y = isolate_sax(y, sr, mode=args.separate)
-    # tempo estimation if not provided
     tempo_est = args.tempo
     if tempo_est <= 0:
         tempo_est, _ = librosa.beat.beat_track(y=y, sr=sr)
@@ -201,25 +223,20 @@ def main():
             tempo_est = 120
     notes = transcribe(y, sr, tempo=tempo_est)
 
-    # instrument autodetect if needed
     if args.instrument == "auto":
         midis = np.array([n["midi"] for n in notes])
         med = float(np.median(midis)) if len(midis) else 69.0
-        # rough centers
         centers = {"soprano": 76, "alto": 69, "tenor": 62, "baritone": 55}
         instrument = min(centers.keys(), key=lambda k: abs(centers[k] - med))
     else:
         instrument = args.instrument
 
     s = to_stream(notes, instrument=instrument, tempo=tempo_est)
-    # key inference via music21 analyzer
     try:
         key_obj = s.analyze('key')
         key_sig = key_obj.name
     except Exception:
         key_sig = "C major"
-
-    # meter heuristic
     meter = "4/4"
 
     Path(args.output_json).write_text(json.dumps({
