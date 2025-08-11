@@ -4,5 +4,58 @@
         <name>TranscriptionTool.Api</name>
     </assembly>
     <members>
+        <member name="T:TranscriptionTool.Api.Contracts.CreateTranscriptionRequest">
+            <summary>
+            Request contract for creating a new transcription job.
+            Expects multipart/form-data with the audio file and an optional instrument hint.
+            </summary>
+        </member>
+        <member name="P:TranscriptionTool.Api.Contracts.CreateTranscriptionRequest.Audio">
+            <summary>
+            Audio file to transcribe (wav/mp3/flac).
+            </summary>
+        </member>
+        <member name="P:TranscriptionTool.Api.Contracts.CreateTranscriptionRequest.InstrumentHint">
+            <summary>
+            Optional instrument hint to guide transposition and analysis.
+            Allowed values: alto, tenor, baritone, soprano, auto.
+            </summary>
+        </member>
+        <member name="T:TranscriptionTool.Api.Domain.Transcription">
+            <summary>
+            Represents a transcription job and its derived metadata.
+            </summary>
+        </member>
+        <member name="P:TranscriptionTool.Api.Domain.AudioBlob.Kind">
+            <summary>
+            original: uploaded mix; isolated: sax-only track after separation.
+            </summary>
+        </member>
+        <member name="P:TranscriptionTool.Api.Domain.ExportArtifact.Format">
+            <summary>
+            Export format content, e.g., MusicXML, MIDI, JSON preview.
+            </summary>
+        </member>
+        <member name="T:TranscriptionTool.Api.Domain.AppDb">
+            <summary>
+            EF Core DbContext for the transcription domain.
+            </summary>
+        </member>
+        <member name="T:TranscriptionTool.Api.Services.ITranscriptionQueue">
+            <summary>
+            Simple in-memory background queue and worker scaffold.
+            Later we can replace with a durable queue (e.g., Hangfire, Azure Queue, or RabbitMQ).
+            </summary>
+        </member>
+        <member name="T:TranscriptionTool.Api.ITranscriptionService">
+            <summary>
+            Facade for scheduling and managing transcription jobs.
+            </summary>
+        </member>
+        <member name="T:TranscriptionTool.Api.TranscriptionService">
+            <summary>
+            Default implementation that places jobs on an in-memory queue.
+            </summary>
+        </member>
     </members>
 </doc>

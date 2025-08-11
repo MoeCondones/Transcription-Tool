@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using TranscriptionTool.Api.Domain;
 using TranscriptionTool.Api;
+using TranscriptionTool.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,6 +22,9 @@ else
     builder.Services.AddDbContext<AppDb>(opt => opt.UseSqlite(cs));
 }
 
+// app services
+builder.Services.AddSingleton<TranscriptionQueue>();
+builder.Services.AddHostedService<TranscriptionWorker>();
 builder.Services.AddScoped<ITranscriptionService, TranscriptionService>();
 
 var app = builder.Build();
@@ -66,6 +70,8 @@ app.MapPost("/transcriptions", async (HttpRequest http, AppDb db, ITranscription
         Content = ms.ToArray(),
     });
     await db.SaveChangesAsync();
+    // enqueue background processing so status will transition queued -> processing -> done
+    svc.ScheduleProcessing(entity.Id);
 
     // Processing deferred to background in later step
     return Results.Accepted($"/transcriptions/{entity.Id}", new { id = entity.Id });
