@@ -1,0 +1,36 @@
+-- Logical schema (works for SQL Server; SQLite variant is similar)
+CREATE TABLE Transcriptions (
+  Id UNIQUEIDENTIFIER PRIMARY KEY,
+  SourceFileName NVARCHAR(256) NOT NULL,
+  InstrumentHint NVARCHAR(32) NOT NULL DEFAULT 'auto',
+  Status NVARCHAR(32) NOT NULL DEFAULT 'queued',
+  KeySignature NVARCHAR(32) NULL,
+  Meter NVARCHAR(16) NULL,
+  CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+);
+
+CREATE TABLE AudioBlobs (
+  Id UNIQUEIDENTIFIER PRIMARY KEY,
+  TranscriptionId UNIQUEIDENTIFIER NOT NULL REFERENCES Transcriptions(Id),
+  Kind NVARCHAR(32) NOT NULL, -- original|isolated
+  Content VARBINARY(MAX) NOT NULL
+);
+
+CREATE TABLE NoteEvents (
+  Id UNIQUEIDENTIFIER PRIMARY KEY,
+  TranscriptionId UNIQUEIDENTIFIER NOT NULL REFERENCES Transcriptions(Id),
+  StartSeconds FLOAT NOT NULL,
+  EndSeconds FLOAT NOT NULL,
+  Midi INT NOT NULL,
+  Velocity INT NULL,
+  Measure INT NULL
+);
+
+CREATE TABLE ExportArtifacts (
+  Id UNIQUEIDENTIFIER PRIMARY KEY,
+  TranscriptionId UNIQUEIDENTIFIER NOT NULL REFERENCES Transcriptions(Id),
+  Format NVARCHAR(16) NOT NULL, -- musicxml|pdf|midi|json
+  Content VARBINARY(MAX) NOT NULL,
+  CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+);
+

@@ -1,0 +1,12 @@
+{
+  "Version": 1,
+  "Hash": "Qn2c6PgOvqreFSnF4v/5GxKK1cqK2nJ3xoh0TAdDKIk=",
+  "Source": "TranscriptionTool.Api",
+  "BasePath": "_content/TranscriptionTool.Api",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": [],
+  "Endpoints": []
+}
