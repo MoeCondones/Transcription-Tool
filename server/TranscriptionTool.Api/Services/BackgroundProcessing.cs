@@ -59,10 +59,18 @@ public sealed class TranscriptionWorker : BackgroundService
                 t.Status = "processing";
                 await db.SaveChangesAsync(stoppingToken);
 
-                await pipeline.RunAsync(id, stoppingToken);
-
-                t.Status = "done";
-                await db.SaveChangesAsync(stoppingToken);
+                try
+                {
+                    await pipeline.RunAsync(id, stoppingToken);
+                    t.Status = "done";
+                    await db.SaveChangesAsync(stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Pipeline failed for {Id}", id);
+                    t.Status = "error";
+                    await db.SaveChangesAsync(stoppingToken);
+                }
             }
             catch (Exception ex)
             {

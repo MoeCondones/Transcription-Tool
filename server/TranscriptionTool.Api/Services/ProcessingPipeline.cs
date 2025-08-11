@@ -135,12 +135,68 @@ public sealed class ProcessingPipeline : IProcessingPipeline
             Content = iso,
         }, ct);
 
-        var notes = await pitch.DetectNotesAsync(transcriptionId, iso, ct);
-        await db.NoteEvents.AddRangeAsync(notes, ct);
+        // call Python worker for real note detection and MusicXML
+        var tempIn = Path.Combine(Path.GetTempPath(), $"{transcriptionId}-in.wav");
+        var tempNotes = Path.Combine(Path.GetTempPath(), $"{transcriptionId}-notes.json");
+        var tempXml = Path.Combine(Path.GetTempPath(), $"{transcriptionId}-score.musicxml");
+        await File.WriteAllBytesAsync(tempIn, iso, ct);
 
-        var mx = await export.GenerateAsync(t, notes, "musicxml", ct);
-        var js = await export.GenerateAsync(t, notes, "json", ct);
-        await db.ExportArtifacts.AddRangeAsync(mx, js);
+        var py = Environment.GetEnvironmentVariable("PYTHON_EXEC") ?? "python3";
+        var worker = Environment.GetEnvironmentVariable("WORKER_SCRIPT") ?? Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "worker", "process.py"));
+        var instrument = t.InstrumentHint;
+
+        var info = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = py,
+            ArgumentList = { worker, "--input", tempIn, "--instrument", instrument, "--output-json", tempNotes, "--output-musicxml", tempXml },
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        using var proc = System.Diagnostics.Process.Start(info)!;
+        string stdout = await proc.StandardOutput.ReadToEndAsync();
+        string stderr = await proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync(ct);
+        if (proc.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"Worker failed: {stderr}");
+        }
+
+        // read outputs
+        var notesJson = await File.ReadAllTextAsync(tempNotes, ct);
+        var parsed = System.Text.Json.JsonDocument.Parse(notesJson).RootElement.GetProperty("notes");
+        var toInsert = new List<NoteEvent>();
+        foreach (var el in parsed.EnumerateArray())
+        {
+            toInsert.Add(new NoteEvent
+            {
+                Id = Guid.NewGuid(),
+                TranscriptionId = transcriptionId,
+                StartSeconds = el.GetProperty("start").GetDouble(),
+                EndSeconds = el.GetProperty("end").GetDouble(),
+                Midi = el.GetProperty("midi").GetInt32(),
+            });
+        }
+        await db.NoteEvents.AddRangeAsync(toInsert, ct);
+
+        var xmlBytes = await File.ReadAllBytesAsync(tempXml, ct);
+        await db.ExportArtifacts.AddAsync(new ExportArtifact
+        {
+            Id = Guid.NewGuid(),
+            TranscriptionId = transcriptionId,
+            Format = "musicxml",
+            Content = xmlBytes,
+            CreatedAt = DateTime.UtcNow,
+        }, ct);
+
+        // also store a JSON artifact for quick preview
+        await db.ExportArtifacts.AddAsync(new ExportArtifact
+        {
+            Id = Guid.NewGuid(),
+            TranscriptionId = transcriptionId,
+            Format = "json",
+            Content = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(toInsert.Select(n => new { n.StartSeconds, n.EndSeconds, n.Midi })),
+            CreatedAt = DateTime.UtcNow,
+        }, ct);
 
         await db.SaveChangesAsync(ct);
     }
