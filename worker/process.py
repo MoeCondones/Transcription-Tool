@@ -186,6 +186,8 @@ def main():
     ap.add_argument("--instrument", default="auto")
     ap.add_argument("--output-json", required=True)
     ap.add_argument("--output-musicxml", required=True)
+    ap.add_argument("--output-midi", help="Optional path to write MIDI file")
+    ap.add_argument("--output-pdf", help="Optional path to write PDF via music21 backend")
     ap.add_argument("--tempo", type=int, default=0)
     ap.add_argument("--separate", choices=["auto", "demucs", "spleeter", "no"], default="no")
     args = ap.parse_args()
@@ -207,6 +209,10 @@ def main():
         meta["instrument"] = target
         Path(args.output_json).write_text(json.dumps({"meta": meta, "notes": tnotes}), encoding="utf-8")
         s.write("musicxml", fp=args.output_musicxml)
+        if args.output_midi:
+            s.write("midi", fp=args.output_midi)
+        if args.output_pdf:
+            s.write("musicxml.pdf", fp=args.output_pdf)
         return
 
     # Otherwise, transcribe from audio
@@ -244,6 +250,10 @@ def main():
         "notes": notes
     }), encoding="utf-8")
     s.write("musicxml", fp=args.output_musicxml)
+    if args.output_midi:
+        s.write("midi", fp=args.output_midi)
+    if args.output_pdf:
+        s.write("musicxml.pdf", fp=args.output_pdf)
 
 
 if __name__ == "__main__":

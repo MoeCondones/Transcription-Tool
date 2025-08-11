@@ -99,7 +99,34 @@ app.MapGet("/transcriptions/{id}", async (Guid id, AppDb db) =>
 app.MapGet("/transcriptions/{id}/export", (Guid id, string format) => Results.Ok(new { id, format }))
    .WithName("ExportTranscription");
 
-app.MapPost("/transcriptions/{id}/transpose", (Guid id, string target) => Results.Ok(new { id, target }))
+app.MapPost("/transcriptions/{id}/transpose", async (Guid id, string target, AppDb db) =>
+{
+    var t = await db.Transcriptions.FindAsync(id);
+    if (t is null) return Results.NotFound();
+    // Build a JSON notes payload from DB and call worker in transpose mode
+    var notes = await db.NoteEvents.Where(n => n.TranscriptionId == id).Select(n => new { n.StartSeconds, n.EndSeconds, n.Midi }).ToListAsync();
+    var tempIn = Path.Combine(Path.GetTempPath(), $"{id}-notes.json");
+    var tempOutJson = Path.Combine(Path.GetTempPath(), $"{id}-{target}-notes.json");
+    var tempXml = Path.Combine(Path.GetTempPath(), $"{id}-{target}.musicxml");
+    await File.WriteAllBytesAsync(tempIn, System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new { meta = new { tempo = 120, instrument = t.InstrumentHint }, notes }), default);
+
+    var py = Environment.GetEnvironmentVariable("PYTHON_EXEC") ?? "python3";
+    var worker = Environment.GetEnvironmentVariable("WORKER_SCRIPT") ?? Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "worker", "process.py"));
+    var info = new System.Diagnostics.ProcessStartInfo
+    {
+        FileName = py,
+        ArgumentList = { worker, "--input-json", tempIn, "--instrument", target, "--output-json", tempOutJson, "--output-musicxml", tempXml },
+        RedirectStandardError = true,
+        RedirectStandardOutput = true,
+    };
+    using var proc = System.Diagnostics.Process.Start(info)!;
+    await proc.WaitForExitAsync();
+    if (proc.ExitCode != 0) return Results.Problem("Transpose worker failed");
+    var xml = await File.ReadAllBytesAsync(tempXml);
+    await db.ExportArtifacts.AddAsync(new ExportArtifact { Id = Guid.NewGuid(), TranscriptionId = id, Format = $"musicxml-{target}", Content = xml, CreatedAt = DateTime.UtcNow });
+    await db.SaveChangesAsync();
+    return Results.Ok(new { id, target });
+})
    .WithName("TransposeTranscription");
 
 app.MapPatch("/transcriptions/{id}/notes", (Guid id) => Results.Ok(new { id, updated = true }))
