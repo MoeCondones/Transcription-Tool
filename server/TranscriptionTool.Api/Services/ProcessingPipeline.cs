@@ -163,7 +163,14 @@ public sealed class ProcessingPipeline : IProcessingPipeline
 
         // read outputs
         var notesJson = await File.ReadAllTextAsync(tempNotes, ct);
-        var parsed = System.Text.Json.JsonDocument.Parse(notesJson).RootElement.GetProperty("notes");
+        var root = System.Text.Json.JsonDocument.Parse(notesJson).RootElement;
+        // meta
+        if (root.TryGetProperty("meta", out var meta))
+        {
+            t.KeySignature = meta.TryGetProperty("key", out var k) ? k.GetString() : t.KeySignature;
+            t.Meter = meta.TryGetProperty("meter", out var m) ? m.GetString() : t.Meter;
+        }
+        var parsed = root.GetProperty("notes");
         var toInsert = new List<NoteEvent>();
         foreach (var el in parsed.EnumerateArray())
         {

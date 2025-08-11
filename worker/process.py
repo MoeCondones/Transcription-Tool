@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
 Worker script: reads an input audio file, detects notes, and writes outputs:
-- JSON notes to output_json
+- JSON notes + metadata to output_json
 - MusicXML score to output_musicxml
 
 Usage:
   python process.py --input path/to/audio --instrument auto|alto|tenor|baritone|soprano \
-                    --output-json notes.json --output-musicxml score.musicxml
+                    --output-json notes.json --output-musicxml score.musicxml [--tempo 120]
 
 Dependencies (see worker/requirements.txt): librosa, soundfile, music21
+Optional: aubio, demucs, spleeter
 """
 import argparse
 import json
@@ -16,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import librosa
+import librosa.effects
 from music21 import stream as m21stream, tempo as m21tempo, meter as m21meter, note as m21note, instrument as m21inst
 
 
@@ -34,6 +36,73 @@ def hz_to_midi(hz: float) -> float:
 def midi_to_name(midi: int) -> str:
     m = m21note.Note(midi)
     return m.nameWithOctave
+
+
+def bandpass_fft(y: np.ndarray, sr: int, low: float = 180, high: float = 2000) -> np.ndarray:
+    Y = np.fft.rfft(y)
+    freqs = np.fft.rfftfreq(len(y), 1.0 / sr)
+    mask = (freqs >= low) & (freqs <= high)
+    Yf = np.zeros_like(Y)
+    Yf[mask] = Y[mask]
+    out = np.fft.irfft(Yf, n=len(y))
+    out = out / (np.max(np.abs(out)) + 1e-9)
+    return out.astype(np.float32)
+
+
+def isolate_sax(y: np.ndarray, sr: int, mode: str = "auto") -> np.ndarray:
+    if mode == "no":
+        return y
+    # Try demucs
+    if mode in ("auto", "demucs"):
+        try:
+            import torch  # type: ignore
+            from demucs.pretrained import get_model  # type: ignore
+            from demucs.apply import apply_model  # type: ignore
+            model = get_model("htdemucs")
+            wav = torch.tensor(y[None, None, :])
+            sources = apply_model(model, wav, split=True, overlap=0.25)[0]  # (num_src, ch, T)
+            # Combine other+vocals as proxy melodic
+            # Demucs source order varies; pick the first two as a naive fallback
+            mix = sources.mean(dim=1).detach().cpu().numpy()
+            comp = mix[0]
+            if mix.shape[0] > 1:
+                comp = 0.5 * (mix[0] + mix[1])
+            comp = comp / (np.max(np.abs(comp)) + 1e-9)
+            return comp.astype(np.float32)
+        except Exception:
+            pass
+    # Try spleeter
+    if mode in ("auto", "spleeter"):
+        try:
+            from spleeter.separator import Separator  # type: ignore
+            sep = Separator("spleeter:2stems")
+            wav = np.stack([y, y], axis=1)
+            pred = sep.separate(wav)
+            comp = pred.get("other")
+            if comp is None:
+                comp = pred[list(pred.keys())[0]]
+            comp = comp.mean(axis=1)
+            comp = comp / (np.max(np.abs(comp)) + 1e-9)
+            return comp.astype(np.float32)
+        except Exception:
+            pass
+    # Fallback: HPSS + band-pass
+    harm, _ = librosa.effects.hpss(y)
+    return bandpass_fft(harm, sr)
+
+
+def quantize_notes(notes, tempo: int, divisions: int = 16):
+    if divisions <= 0:
+        return notes
+    grid = 60.0 / tempo / (divisions / 4.0)  # seconds per 1/divisions note
+    q = []
+    for n in notes:
+        s = round(n["start"] / grid) * grid
+        e = round(n["end"] / grid) * grid
+        if e <= s:
+            e = s + grid
+        q.append({**n, "start": float(s), "end": float(e)})
+    return q
 
 
 def transcribe(y: np.ndarray, sr: int, tempo: int = 120):
@@ -69,7 +138,8 @@ def transcribe(y: np.ndarray, sr: int, tempo: int = 120):
                     s = current_start * hop / sr
                     e = i * hop / sr
                     if e - s > 0.04:
-                        notes.append({"start": float(s), "end": float(e), "midi": int(current_pitch), "name": midi_to_name(int(current_pitch))})
+                        vel = float(np.clip(np.median(rmse[current_start:i]) * 127.0, 1, 127))
+                        notes.append({"start": float(s), "end": float(e), "midi": int(current_pitch), "name": midi_to_name(int(current_pitch)), "velocity": int(round(vel))})
                     current_start = i
                     current_pitch = p
         else:
@@ -77,15 +147,17 @@ def transcribe(y: np.ndarray, sr: int, tempo: int = 120):
                 s = current_start * hop / sr
                 e = i * hop / sr
                 if e - s > 0.04:
-                    notes.append({"start": float(s), "end": float(e), "midi": int(current_pitch), "name": midi_to_name(int(current_pitch))})
+                    vel = float(np.clip(np.median(rmse[current_start:i]) * 127.0, 1, 127))
+                    notes.append({"start": float(s), "end": float(e), "midi": int(current_pitch), "name": midi_to_name(int(current_pitch)), "velocity": int(round(vel))})
                 current_start = None
                 current_pitch = None
 
     if current_start is not None and current_pitch is not None:
         s = current_start * hop / sr
         e = len(f0) * hop / sr
-        notes.append({"start": float(s), "end": float(e), "midi": int(current_pitch), "name": midi_to_name(int(current_pitch))})
-    return notes
+        vel = float(np.clip(np.median(rmse[current_start:]) * 127.0, 1, 127))
+        notes.append({"start": float(s), "end": float(e), "midi": int(current_pitch), "name": midi_to_name(int(current_pitch)), "velocity": int(round(vel))})
+    return quantize_notes(notes, tempo=tempo, divisions=16)
 
 
 def to_stream(notes, instrument: str, tempo: int = 120):
@@ -113,15 +185,47 @@ def main():
     ap.add_argument("--instrument", default="auto")
     ap.add_argument("--output-json", required=True)
     ap.add_argument("--output-musicxml", required=True)
+    ap.add_argument("--tempo", type=int, default=0)
+    ap.add_argument("--separate", choices=["auto", "demucs", "spleeter", "no"], default="no")
     args = ap.parse_args()
 
     y, sr = librosa.load(args.input, sr=44100, mono=True)
     if np.max(np.abs(y)) > 0:
         y = y / np.max(np.abs(y))
-    notes = transcribe(y, sr)
+    y = isolate_sax(y, sr, mode=args.separate)
+    # tempo estimation if not provided
+    tempo_est = args.tempo
+    if tempo_est <= 0:
+        tempo_est, _ = librosa.beat.beat_track(y=y, sr=sr)
+        if tempo_est <= 0:
+            tempo_est = 120
+    notes = transcribe(y, sr, tempo=tempo_est)
 
-    Path(args.output_json).write_text(json.dumps({"notes": notes}), encoding="utf-8")
-    s = to_stream(notes, instrument=args.instrument if args.instrument != "auto" else "soprano")
+    # instrument autodetect if needed
+    if args.instrument == "auto":
+        midis = np.array([n["midi"] for n in notes])
+        med = float(np.median(midis)) if len(midis) else 69.0
+        # rough centers
+        centers = {"soprano": 76, "alto": 69, "tenor": 62, "baritone": 55}
+        instrument = min(centers.keys(), key=lambda k: abs(centers[k] - med))
+    else:
+        instrument = args.instrument
+
+    s = to_stream(notes, instrument=instrument, tempo=tempo_est)
+    # key inference via music21 analyzer
+    try:
+        key_obj = s.analyze('key')
+        key_sig = key_obj.name
+    except Exception:
+        key_sig = "C major"
+
+    # meter heuristic
+    meter = "4/4"
+
+    Path(args.output_json).write_text(json.dumps({
+        "meta": {"tempo": tempo_est, "key": key_sig, "meter": meter, "instrument": instrument},
+        "notes": notes
+    }), encoding="utf-8")
     s.write("musicxml", fp=args.output_musicxml)
 
 
