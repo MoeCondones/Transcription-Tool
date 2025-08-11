@@ -26,6 +26,10 @@ else
 builder.Services.AddSingleton<TranscriptionQueue>();
 builder.Services.AddHostedService<TranscriptionWorker>();
 builder.Services.AddScoped<ITranscriptionService, TranscriptionService>();
+builder.Services.AddScoped<IProcessingPipeline, ProcessingPipeline>();
+builder.Services.AddScoped<ISeparationService, SeparationService>();
+builder.Services.AddScoped<IPitchDetectionService, PitchDetectionService>();
+builder.Services.AddScoped<INotationExportService, NotationExportService>();
 
 var app = builder.Build();
 

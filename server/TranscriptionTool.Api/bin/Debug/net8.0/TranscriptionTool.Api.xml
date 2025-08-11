@@ -47,6 +47,28 @@
             Later we can replace with a durable queue (e.g., Hangfire, Azure Queue, or RabbitMQ).
             </summary>
         </member>
+        <member name="T:TranscriptionTool.Api.Services.ISeparationService">
+            <summary>
+            Separation stage: from mix to sax-only audio (stubbed for now).
+            Replace with Demucs/Spleeter integration later.
+            </summary>
+        </member>
+        <member name="T:TranscriptionTool.Api.Services.IPitchDetectionService">
+            <summary>
+            Pitch/rhythm stage: detect notes with timing (stubbed for now).
+            Replace with Python worker call and real detection later.
+            </summary>
+        </member>
+        <member name="T:TranscriptionTool.Api.Services.INotationExportService">
+            <summary>
+            Notation/export stage (stub): produce MusicXML/MIDI/JSON artifacts from detected notes.
+            </summary>
+        </member>
+        <member name="T:TranscriptionTool.Api.Services.IProcessingPipeline">
+            <summary>
+            End-to-end pipeline orchestrator (stub implementation).
+            </summary>
+        </member>
         <member name="T:TranscriptionTool.Api.ITranscriptionService">
             <summary>
             Facade for scheduling and managing transcription jobs.

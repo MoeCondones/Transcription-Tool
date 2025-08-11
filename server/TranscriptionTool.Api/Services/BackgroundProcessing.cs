@@ -28,11 +28,14 @@ public sealed class TranscriptionWorker : BackgroundService
     private readonly IServiceProvider services;
     private readonly TranscriptionQueue queue;
 
-    public TranscriptionWorker(ILogger<TranscriptionWorker> logger, IServiceProvider services, TranscriptionQueue queue)
+    private readonly IProcessingPipeline pipeline;
+
+    public TranscriptionWorker(ILogger<TranscriptionWorker> logger, IServiceProvider services, TranscriptionQueue queue, IProcessingPipeline pipeline)
     {
         this.logger = logger;
         this.services = services;
         this.queue = queue;
+        this.pipeline = pipeline;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -56,8 +59,7 @@ public sealed class TranscriptionWorker : BackgroundService
                 t.Status = "processing";
                 await db.SaveChangesAsync(stoppingToken);
 
-                // TODO: call separation + pitch/onset + notation pipeline here
-                await Task.Delay(1000, stoppingToken); // simulate work
+                await pipeline.RunAsync(id, stoppingToken);
 
                 t.Status = "done";
                 await db.SaveChangesAsync(stoppingToken);
